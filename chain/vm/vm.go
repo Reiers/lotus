@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/filecoin-project/specs-actors/actors/abi/big"
 	"reflect"
 	"time"
 
@@ -47,7 +48,7 @@ func ResolveToKeyAddr(state types.StateTree, cst cbor.IpldStore, addr address.Ad
 		return address.Undef, aerrors.Newf(exitcode.SysErrInvalidParameters, "failed to find actor: %s", addr)
 	}
 
-	if act.Code != builtin.AccountActorCodeID {
+	if !act.IsAccountActor() {
 		return address.Undef, aerrors.Newf(exitcode.SysErrInvalidParameters, "address %s was not for an account actor", addr)
 	}
 
@@ -278,14 +279,7 @@ func (vm *VM) ApplyMessage(ctx context.Context, cmsg types.ChainMsg) (*ApplyRet,
 
 	msgGasCost := pl.OnChainMessage(cmsg.ChainLength())
 	if msgGasCost > msg.GasLimit {
-		return &ApplyRet{
-			MessageReceipt: types.MessageReceipt{
-				ExitCode: exitcode.SysErrOutOfGas,
-				GasUsed:  0,
-			},
-			Penalty:  types.BigMul(msg.GasPrice, types.NewInt(uint64(msgGasCost))),
-			Duration: time.Since(start),
-		}, nil
+		return nil, xerrors.New("insufficient gas to pay for on-chain cost (this should've been caught at the inclusion stage)")
 	}
 
 	st := vm.cstate
@@ -293,43 +287,29 @@ func (vm *VM) ApplyMessage(ctx context.Context, cmsg types.ChainMsg) (*ApplyRet,
 	minerPenaltyAmount := types.BigMul(msg.GasPrice, types.NewInt(uint64(msgGasCost)))
 	fromActor, err := st.GetActor(msg.From)
 	if err != nil {
-		if xerrors.Is(err, types.ErrActorNotFound) {
-			return &ApplyRet{
-				MessageReceipt: types.MessageReceipt{
-					ExitCode: exitcode.SysErrSenderInvalid,
-					GasUsed:  0,
-				},
-				Penalty:  minerPenaltyAmount,
-				Duration: time.Since(start),
-			}, nil
-		}
-		return nil, xerrors.Errorf("failed to look up from actor: %w", err)
+		return nil, xerrors.Errorf("failed to look up from actor (this should've been caught at the inclusion stage): %w", err)
 	}
 
-	if !fromActor.Code.Equals(builtin.AccountActorCodeID) {
-		return &ApplyRet{
-			MessageReceipt: types.MessageReceipt{
-				ExitCode: exitcode.SysErrSenderInvalid,
-				GasUsed:  0,
-			},
-			Penalty:  minerPenaltyAmount,
-			Duration: time.Since(start),
-		}, nil
+	if !fromActor.IsAccountActor() {
+		return nil, xerrors.Errorf("from actor isn't an account (this should've been caught at the inclusion stage)")
 	}
 
+	// this should only happen if an earlier message in this tipset had the same sender and nonce
+	// not the miner's fault, so no penalty
 	if msg.Nonce != fromActor.Nonce {
 		return &ApplyRet{
 			MessageReceipt: types.MessageReceipt{
 				ExitCode: exitcode.SysErrSenderStateInvalid,
 				GasUsed:  0,
 			},
-			Penalty:  minerPenaltyAmount,
+			Penalty:  big.Zero(),
 			Duration: time.Since(start),
 		}, nil
 	}
 
 	gascost := types.BigMul(types.NewInt(uint64(msg.GasLimit)), msg.GasPrice)
 	totalCost := types.BigAdd(gascost, msg.Value)
+	// TODO: No reason why we can't just catch this at the inclusion stage
 	if fromActor.Balance.LessThan(totalCost) {
 		return &ApplyRet{
 			MessageReceipt: types.MessageReceipt{
