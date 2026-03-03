@@ -3329,19 +3329,9 @@ func UpgradeActorsDaybreak(ctx context.Context, sm *stmgr.StateManager, cache st
 				"to", builtin.BurntFundsActorAddr,
 			)
 
+			subcalls := make([]types.ExecutionTrace, 0)
 			transferCb := func(trace types.ExecutionTrace) {
-				if cb != nil {
-					if err := cb.MessageApplied(ctx, ts, epoch, &types.Message{
-						From:  builtin.ReserveAddress,
-						To:    builtin.BurntFundsActorAddr,
-						Value: burnAmount,
-					}, &vm.ApplyRet{
-						MessageReceipt: *stmgr.MakeFakeRct(),
-						ExecutionTrace: trace,
-					}, false); err != nil {
-						log.Errorf("Daybreak: failed to trace reserve burn: %+v", err)
-					}
-				}
+				subcalls = append(subcalls, trace)
 			}
 
 			if err := stmgr.DoTransfer(tree, builtin.ReserveAddress, builtin.BurntFundsActorAddr,
@@ -3349,9 +3339,43 @@ func UpgradeActorsDaybreak(ctx context.Context, sm *stmgr.StateManager, cache st
 				return cid.Undef, xerrors.Errorf("Daybreak: failed to burn mining reserve: %w", err)
 			}
 
+			if cb != nil {
+				fakeMsg := stmgr.MakeFakeMsg(builtin.SystemActorAddr, builtin.SystemActorAddr, big.Zero(), uint64(epoch))
+
+				if err := cb.MessageApplied(ctx, ts, fakeMsg.Cid(), fakeMsg, &vm.ApplyRet{
+					MessageReceipt: *stmgr.MakeFakeRct(),
+					ActorErr:       nil,
+					ExecutionTrace: types.ExecutionTrace{
+						Msg: types.MessageTrace{
+							To:   fakeMsg.To,
+							From: fakeMsg.From,
+						},
+						Subcalls: subcalls,
+					},
+					Duration: 0,
+					GasCosts: nil,
+				}, false); err != nil {
+					return cid.Undef, xerrors.Errorf("Daybreak: failed to record reserve burn trace: %w", err)
+				}
+			}
+
 			log.Infow("Daybreak: mining reserve burned successfully",
 				"amount", types.FIL(burnAmount),
 			)
+
+			// Sanity check: total supply must still equal FilBase
+			total := abi.NewTokenAmount(0)
+			if err := tree.ForEach(func(addr address.Address, act *types.Actor) error {
+				total = types.BigAdd(total, act.Balance)
+				return nil
+			}); err != nil {
+				return cid.Undef, xerrors.Errorf("Daybreak: failed to verify total balance: %w", err)
+			}
+
+			exp := types.FromFil(buildconstants.FilBase)
+			if !exp.Equals(total) {
+				return cid.Undef, xerrors.Errorf("Daybreak: total balance mismatch after reserve burn: expected %s, got %s", exp, total)
+			}
 
 			newRoot, err = tree.Flush(ctx)
 			if err != nil {
