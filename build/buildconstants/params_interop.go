@@ -84,7 +84,9 @@ const UpgradeTockFixHeight abi.ChainEpoch = -4
 
 var UpgradeGoldenWeekHeight = abi.ChainEpoch(-31)
 
-const UpgradeXxHeight = 50
+const UpgradeDaybreakHeight = 50
+
+var DaybreakTransitionDuration = abi.ChainEpoch(1_051_200)
 
 var DrandSchedule = map[abi.ChainEpoch]DrandEnum{
 	0: DrandQuicknet,

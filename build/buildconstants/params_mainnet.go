@@ -140,8 +140,16 @@ var UpgradeTockFixHeight = abi.ChainEpoch(-1)
 // 2025-09-24T23:00:00Z
 const UpgradeGoldenWeekHeight = abi.ChainEpoch(5348280)
 
-// ????
-var UpgradeXxHeight = abi.ChainEpoch(9999999999)
+// FIP-XXXX Daybreak: Restore Equal Sector Quality and Burn Mining Reserve
+// - Linear VDWM transition from 10x to 1x over 12 months (1,051,200 epochs)
+// - Burn remaining mining reserve (~283M FIL)
+// - See: https://github.com/filecoin-project/FIPs/discussions/1238
+var UpgradeDaybreakHeight = abi.ChainEpoch(9999999999)
+
+// DaybreakTransitionDuration is the number of epochs over which the verified deal
+// weight multiplier (VDWM) transitions linearly from 10x to 1x. This equals
+// approximately 12 months at 30-second epoch intervals.
+var DaybreakTransitionDuration = abi.ChainEpoch(1_051_200)
 
 var UpgradeTeepInitialFilReserved = InitialFilReserved // FIP-0100: no change for mainnet
 
@@ -160,8 +168,8 @@ func init() {
 	}
 	SetAddressNetwork(addrNetwork)
 
-	if os.Getenv("LOTUS_DISABLE_XX") == "1" {
-		UpgradeXxHeight = math.MaxInt64 - 1
+	if os.Getenv("LOTUS_DISABLE_DAYBREAK") == "1" {
+		UpgradeDaybreakHeight = math.MaxInt64 - 1
 	}
 
 	// NOTE: DO NOT change this unless you REALLY know what you're doing. This is not consensus critical, however,

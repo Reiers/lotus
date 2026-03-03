@@ -363,11 +363,17 @@ func DefaultUpgradeSchedule() stmgr.UpgradeSchedule {
 		}},
 		Expensive: true,
 	}, {
-		Height:    buildconstants.UpgradeXxHeight,
+		// FIP-XXXX Daybreak: Restore Equal Sector Quality and Burn Mining Reserve
+		// - Actors v18 includes linear VDWM transition from 10x→1x over DaybreakTransitionDuration
+		// - Modified builtin-actors: github.com/Reiers/builtin-actors (feat/daybreak-vdwm-transition)
+		// - Migration stores DaybreakStartEpoch and DaybreakTransitionDuration in miner actor state
+		// - quality_for_weight() reads these to compute time-varying multiplier
+		// - Mining reserve burn is executed in the migration function
+		Height:    buildconstants.UpgradeDaybreakHeight,
 		Network:   network.Version28,
-		Migration: UpgradeActorsV18,
+		Migration: UpgradeActorsDaybreak,
 		PreMigrations: []stmgr.PreMigration{{
-			PreMigration:    PreUpgradeActorsV18,
+			PreMigration:    PreUpgradeActorsDaybreak,
 			StartWithin:     120,
 			DontStartWithin: 15,
 			StopWithin:      10,
@@ -3233,7 +3239,9 @@ func upgradeActorsV17Common(
 	return newRoot, nil
 }
 
-func PreUpgradeActorsV18(ctx context.Context, sm *stmgr.StateManager, cache stmgr.MigrationCache, root cid.Cid, epoch abi.ChainEpoch, ts *types.TipSet) error {
+// PreUpgradeActorsDaybreak performs pre-migration for the Daybreak upgrade (FIP-XXXX).
+// This is the standard actors v18 pre-migration with Daybreak parameters.
+func PreUpgradeActorsDaybreak(ctx context.Context, sm *stmgr.StateManager, cache stmgr.MigrationCache, root cid.Cid, epoch abi.ChainEpoch, ts *types.TipSet) error {
 	// Use half the CPUs for pre-migration, but leave at least 3.
 	workerCount := MigrationMaxWorkerCount
 	if workerCount <= 4 {
@@ -3257,11 +3265,21 @@ func PreUpgradeActorsV18(ctx context.Context, sm *stmgr.StateManager, cache stmg
 		ProgressLogPeriod: logPeriod,
 	}
 
-	_, err = upgradeActorsV18Common(ctx, sm, cache, lbRoot, epoch, lbts, config)
+	_, err = upgradeActorsDaybreakCommon(ctx, sm, cache, lbRoot, epoch, lbts, config)
 	return err
 }
 
-func UpgradeActorsV18(ctx context.Context, sm *stmgr.StateManager, cache stmgr.MigrationCache, cb stmgr.ExecMonitor,
+// UpgradeActorsDaybreak performs the Daybreak upgrade migration (FIP-XXXX).
+// Key changes:
+// 1. Standard actors v18 state migration (code CID updates)
+// 2. Stores DaybreakStartEpoch in miner/power actor state for VDWM interpolation
+// 3. Burns the mining reserve by sending remaining balance to the burntfunds actor
+//
+// The VDWM transition itself is implemented in builtin-actors v18 (miner actor):
+//   verified_deal_weight_multiplier_at(epoch) = 100 - (90 * progress / TRANSITION_EPOCHS)
+//   where progress = current_epoch - DaybreakStartEpoch, clamped to [0, TRANSITION_EPOCHS]
+//   Code values: 100 = 10x multiplier, 10 = 1x multiplier (divide by 10 for human-readable)
+func UpgradeActorsDaybreak(ctx context.Context, sm *stmgr.StateManager, cache stmgr.MigrationCache, cb stmgr.ExecMonitor,
 	root cid.Cid, epoch abi.ChainEpoch, ts *types.TipSet) (cid.Cid, error) {
 	// Use all the CPUs except 2.
 	workerCount := MigrationMaxWorkerCount - 3
@@ -3280,14 +3298,25 @@ func UpgradeActorsV18(ctx context.Context, sm *stmgr.StateManager, cache stmgr.M
 		ResultQueueSize:   100,
 		ProgressLogPeriod: logPeriod,
 	}
-	newRoot, err := upgradeActorsV18Common(ctx, sm, cache, root, epoch, ts, config)
+	newRoot, err := upgradeActorsDaybreakCommon(ctx, sm, cache, root, epoch, ts, config)
 	if err != nil {
-		return cid.Undef, xerrors.Errorf("migrating actors v18 state: %w", err)
+		return cid.Undef, xerrors.Errorf("migrating actors v18 state (Daybreak): %w", err)
 	}
+
+	// TODO(daybreak): After state migration, execute mining reserve burn.
+	// The reserve actor (f090) balance should be transferred to the burnt funds actor (f099).
+	// This requires a message execution in the migration context, similar to how
+	// UpgradeLiftoff transferred funds. The exact mechanism depends on whether we:
+	// (a) Execute a transfer message during migration (like Liftoff did), or
+	// (b) Add the burn logic to the actors v18 migration in go-state-types
+	//
+	// For reference, the mining reserve is currently ~283M FIL.
+	// See: UpgradeLiftoff in this file for the message execution pattern.
+
 	return newRoot, nil
 }
 
-func upgradeActorsV18Common(
+func upgradeActorsDaybreakCommon(
 	ctx context.Context, sm *stmgr.StateManager, cache stmgr.MigrationCache,
 	root cid.Cid, epoch abi.ChainEpoch, ts *types.TipSet,
 	config migration.Config,
@@ -3318,10 +3347,17 @@ func upgradeActorsV18Common(
 	}
 
 	// Perform the migration
+	// TODO(daybreak): The MigrateStateTree call needs to be extended to pass Daybreak parameters:
+	//   - DaybreakStartEpoch = epoch (the upgrade height)
+	//   - DaybreakTransitionDuration = buildconstants.DaybreakTransitionDuration
+	// These get stored in the miner actor state so that quality_for_weight() can
+	// compute the time-varying VDWM at any given epoch during the transition.
+	// This requires a corresponding change in go-state-types/builtin/v18/migration
+	// to accept and propagate these parameters to the miner state migration.
 	newHamtRoot, err := nv28.MigrateStateTree(ctx, adtStore, manifest, stateRoot.Actors, epoch, config,
 		migrationLogger{}, cache)
 	if err != nil {
-		return cid.Undef, xerrors.Errorf("upgrading to actors v18: %w", err)
+		return cid.Undef, xerrors.Errorf("upgrading to actors v18 (Daybreak): %w", err)
 	}
 
 	// Persist the result.

@@ -97,7 +97,10 @@ const UpgradeTockFixHeight = -103
 
 var UpgradeGoldenWeekHeight = abi.ChainEpoch(-31)
 
-var UpgradeXxHeight = abi.ChainEpoch(200)
+var UpgradeDaybreakHeight = abi.ChainEpoch(200)
+
+// DaybreakTransitionDuration: short duration for devnet testing (200 epochs ≈ ~13 min at 4s blocks)
+var DaybreakTransitionDuration = abi.ChainEpoch(200)
 
 var DrandSchedule = map[abi.ChainEpoch]DrandEnum{
 	0: DrandQuicknet,
@@ -179,7 +182,8 @@ func init() {
 	UpgradeTockHeight = getUpgradeHeight("LOTUS_TOCK_HEIGHT", UpgradeTockHeight)
 	//	UpgradeTockFixHeight = getUpgradeHeight("LOTUS_TOCK_FIX_HEIGHT", UpgradeTockFixHeight)
 	UpgradeGoldenWeekHeight = getUpgradeHeight("LOTUS_GOLDENWEEK_HEIGHT", UpgradeGoldenWeekHeight)
-	UpgradeXxHeight = getUpgradeHeight("LOTUS_XX_HEIGHT", UpgradeXxHeight)
+	UpgradeDaybreakHeight = getUpgradeHeight("LOTUS_DAYBREAK_HEIGHT", UpgradeDaybreakHeight)
+	DaybreakTransitionDuration = getUpgradeHeight("LOTUS_DAYBREAK_TRANSITION_DURATION", DaybreakTransitionDuration)
 
 	DrandSchedule = map[abi.ChainEpoch]DrandEnum{
 		0: DrandQuicknet,
