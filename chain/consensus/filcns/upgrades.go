@@ -3303,15 +3303,60 @@ func UpgradeActorsDaybreak(ctx context.Context, sm *stmgr.StateManager, cache st
 		return cid.Undef, xerrors.Errorf("migrating actors v18 state (Daybreak): %w", err)
 	}
 
-	// TODO(daybreak): After state migration, execute mining reserve burn.
-	// The reserve actor (f090) balance should be transferred to the burnt funds actor (f099).
-	// This requires a message execution in the migration context, similar to how
-	// UpgradeLiftoff transferred funds. The exact mechanism depends on whether we:
-	// (a) Execute a transfer message during migration (like Liftoff did), or
-	// (b) Add the burn logic to the actors v18 migration in go-state-types
-	//
-	// For reference, the mining reserve is currently ~283M FIL.
-	// See: UpgradeLiftoff in this file for the message execution pattern.
+	// FIP-XXXX Daybreak: Burn the mining reserve.
+	// Transfer the entire balance of the reserve actor (f090) to the burnt funds actor (f099).
+	// This uses the same DoTransfer pattern as the genesis UpgradeFaucetBurnRecovery.
+	// The reserve currently holds ~283M FIL (post-FIP-0100 changes).
+	{
+		tree, err := sm.StateTree(newRoot)
+		if err != nil {
+			return cid.Undef, xerrors.Errorf("getting state tree for reserve burn: %w", err)
+		}
+
+		reserveActor, err := tree.GetActor(builtin.ReserveAddress)
+		if err != nil {
+			return cid.Undef, xerrors.Errorf("failed to get reserve actor: %w", err)
+		}
+
+		if reserveActor.Balance.Sign() > 0 {
+			log.Infow("Daybreak: burning mining reserve",
+				"reserve_balance", types.FIL(reserveActor.Balance),
+				"from", builtin.ReserveAddress,
+				"to", builtin0.BurntFundsActorAddr,
+			)
+
+			transferCb := func(trace types.ExecutionTrace) {
+				if cb != nil {
+					if err := cb.MessageApplied(ctx, ts, epoch, &types.Message{
+						From:  builtin.ReserveAddress,
+						To:    builtin0.BurntFundsActorAddr,
+						Value: reserveActor.Balance,
+					}, &vm.ApplyRet{
+						MessageReceipt: *types.NewMessageReceipt(0, nil, 0),
+						ExecutionTrace: trace,
+					}, false); err != nil {
+						log.Errorf("Daybreak: failed to trace reserve burn: %+v", err)
+					}
+				}
+			}
+
+			if err := stmgr.DoTransfer(tree, builtin.ReserveAddress, builtin0.BurntFundsActorAddr,
+				reserveActor.Balance, transferCb); err != nil {
+				return cid.Undef, xerrors.Errorf("Daybreak: failed to burn mining reserve: %w", err)
+			}
+
+			log.Infow("Daybreak: mining reserve burned successfully",
+				"amount", types.FIL(reserveActor.Balance),
+			)
+
+			newRoot, err = tree.Flush(ctx)
+			if err != nil {
+				return cid.Undef, xerrors.Errorf("Daybreak: failed to flush state after reserve burn: %w", err)
+			}
+		} else {
+			log.Infow("Daybreak: reserve balance is zero, skipping burn")
+		}
+	}
 
 	return newRoot, nil
 }
