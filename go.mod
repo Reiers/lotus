@@ -357,3 +357,5 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/telemetry v0.0.0-20260209163413-e7419c687ee4 // indirect
 )
+
+replace github.com/filecoin-project/go-state-types => github.com/Reiers/go-state-types v0.0.0-20260303140350-2227610e233a
