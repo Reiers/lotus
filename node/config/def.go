@@ -85,7 +85,7 @@ func DefaultFullNode() *FullNode {
 		Fevm: FevmConfig{
 			EnableEthRPC:             false,
 			EthTraceFilterMaxResults: 500,
-			EthBlkCacheSize:          500,
+			EthBlkCacheSize:          5000,
 		},
 		Events: EventsConfig{
 			EnableActorEventsAPI: false,

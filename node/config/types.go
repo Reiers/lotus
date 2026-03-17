@@ -539,7 +539,7 @@ type FevmConfig struct {
 	// EthBlkCacheSize specifies the size of the cache used for caching Ethereum blocks.
 	// This cache enhances the performance of the eth_getBlockByHash RPC call by minimizing the need to access chain state for
 	// recently requested blocks that are already cached.
-	// The default size of the cache is 500 blocks.
+	// The default size of the cache is 5000 blocks (~42 hours of Filecoin blocks at 30s epochs).
 	// Note: Setting this value to 0 disables the cache.
 	EthBlkCacheSize int
 }
