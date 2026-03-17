@@ -106,9 +106,20 @@ func GasEstimateCallWithGas(
 	currTs *types.TipSet,
 ) (*api.InvocResult, []types.ChainMsg, *types.TipSet, error) {
 	msg := *msgIn
+
+	// Resolve the from address to find pending messages. For non-existent addresses
+	// (e.g. new wallets that haven't been funded), resolution will fail — that's fine,
+	// there can't be any pending messages for them. Use the original address and proceed.
 	fromA, err := smgr.ResolveToDeterministicAddress(ctx, msgIn.From, currTs)
 	if err != nil {
-		return nil, []types.ChainMsg{}, nil, xerrors.Errorf("getting key address: %w", err)
+		// For delegated (f4/0x) addresses, use the original address — these are
+		// self-describing and don't need on-chain resolution. The callInternal path
+		// will handle creating a synthetic actor if needed.
+		if msgIn.From.Protocol() == address.Delegated {
+			fromA = msgIn.From
+		} else {
+			return nil, []types.ChainMsg{}, nil, xerrors.Errorf("getting key address: %w", err)
+		}
 	}
 
 	pending, ts := mpool.PendingFor(ctx, fromA)

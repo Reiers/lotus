@@ -13,12 +13,14 @@ import (
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
+	builtintypes "github.com/filecoin-project/go-state-types/builtin"
 	"github.com/filecoin-project/go-state-types/crypto"
 	"github.com/filecoin-project/go-state-types/network"
 
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/blockstore"
 	"github.com/filecoin-project/lotus/build/buildconstants"
+	builtinactors "github.com/filecoin-project/lotus/chain/actors/builtin"
 	"github.com/filecoin-project/lotus/chain/rand"
 	"github.com/filecoin-project/lotus/chain/state"
 	"github.com/filecoin-project/lotus/chain/types"
@@ -218,7 +220,19 @@ func (sm *StateManager) callInternal(ctx context.Context, msg *types.Message, pr
 
 	fromActor, err := stTree.GetActor(msg.From)
 	if err != nil {
-		return nil, xerrors.Errorf("call raw get actor: %s", err)
+		if !errors.Is(err, types.ErrActorNotFound) {
+			return nil, xerrors.Errorf("call raw get actor: %s", err)
+		}
+
+		// Actor doesn't exist on-chain. For eth_call/eth_estimateGas, we create a
+		// synthetic EthAccount actor via implicit messages so the VM can process the
+		// call. This matches Geth's behavior where the from address doesn't need to exist.
+		var synthErr error
+		fromActor, stateCid, vmi, synthErr = sm.createSyntheticSenderActor(ctx, msg.From, ts, vmopt)
+		if synthErr != nil {
+			// If synthetic creation fails, return the original error
+			return nil, xerrors.Errorf("call raw get actor: %s", err)
+		}
 	}
 
 	msg.Nonce = fromActor.Nonce
@@ -238,6 +252,8 @@ func (sm *StateManager) callInternal(ctx context.Context, msg *types.Message, pr
 	var ret *vm.ApplyRet
 	var gasInfo api.MsgGasCost
 	if checkGas {
+		// For delegated (f4) addresses, ResolveToDeterministicAddress returns them directly
+		// without needing a state lookup, so this works even for synthetic actors.
 		fromKey, err := sm.ResolveToDeterministicAddress(ctx, msg.From, ts)
 		if err != nil {
 			return nil, xerrors.Errorf("could not resolve key: %w", err)
@@ -292,6 +308,96 @@ func (sm *StateManager) callInternal(ctx context.Context, msg *types.Message, pr
 		Error:          errs,
 		Duration:       ret.Duration,
 	}, err
+}
+
+// createSyntheticSenderActor creates an EthAccount actor for simulation when the sender
+// address doesn't exist on chain. This enables eth_call/eth_estimateGas to work with
+// non-existent addresses, matching Geth's behavior.
+//
+// The process uses implicit messages to create the actor through the normal init actor,
+// ensuring all actor invariants are maintained:
+//  1. Send an implicit message TO the address (creates a Placeholder actor via init actor)
+//  2. Send an implicit message FROM the address (promotes Placeholder to EthAccount)
+//
+// State modifications are isolated in the buffered blockstore and NOT persisted.
+func (sm *StateManager) createSyntheticSenderActor(
+	ctx context.Context,
+	fromAddr address.Address,
+	ts *types.TipSet,
+	vmopt *vm.VMOpts,
+) (*types.Actor, cid.Cid, vm.Interface, error) {
+	log.Debugw("creating synthetic sender actor for simulation", "address", fromAddr, "height", ts.Height())
+
+	// Create a VM to apply implicit messages
+	vmi, err := sm.newVM(ctx, vmopt)
+	if err != nil {
+		return nil, cid.Undef, nil, xerrors.Errorf("failed to set up vm for actor creation: %w", err)
+	}
+
+	// Step 1: Send TO the address to create a Placeholder actor in the init actor's address map.
+	createMsg := &types.Message{
+		From:       builtinactors.SystemActorAddr,
+		To:         fromAddr,
+		Value:      big.Zero(),
+		Method:     builtintypes.MethodSend,
+		Params:     nil,
+		GasLimit:   1 << 30,
+		GasFeeCap:  big.Zero(),
+		GasPremium: big.Zero(),
+	}
+	ret, err := vmi.ApplyImplicitMessage(ctx, createMsg)
+	if err != nil {
+		return nil, cid.Undef, nil, xerrors.Errorf("failed to create placeholder actor: %w", err)
+	}
+	if ret.ExitCode != 0 {
+		return nil, cid.Undef, nil, xerrors.Errorf("placeholder creation failed with exit code %d: %s", ret.ExitCode, ret.ActorErr)
+	}
+
+	// Step 2: Send FROM the address to promote Placeholder → EthAccount (f4 addresses
+	// with nonce 0 are automatically promoted by the FVM).
+	promoteMsg := &types.Message{
+		From:       fromAddr,
+		To:         fromAddr,
+		Value:      big.Zero(),
+		Method:     builtintypes.MethodSend,
+		Params:     nil,
+		GasLimit:   1 << 30,
+		GasFeeCap:  big.Zero(),
+		GasPremium: big.Zero(),
+		Nonce:      0,
+	}
+	ret, err = vmi.ApplyImplicitMessage(ctx, promoteMsg)
+	if err != nil {
+		return nil, cid.Undef, nil, xerrors.Errorf("failed to promote to EthAccount: %w", err)
+	}
+	if ret.ExitCode != 0 {
+		return nil, cid.Undef, nil, xerrors.Errorf("EthAccount promotion failed with exit code %d: %s", ret.ExitCode, ret.ActorErr)
+	}
+
+	// Flush VM state and load the created actor
+	newStateCid, err := vmi.Flush(ctx)
+	if err != nil {
+		return nil, cid.Undef, nil, xerrors.Errorf("failed to flush vm: %w", err)
+	}
+
+	newStTree, err := state.LoadStateTree(cbor.NewCborStore(vmopt.Bstore), newStateCid)
+	if err != nil {
+		return nil, cid.Undef, nil, xerrors.Errorf("failed to load state tree: %w", err)
+	}
+
+	fromActor, err := newStTree.GetActor(fromAddr)
+	if err != nil {
+		return nil, cid.Undef, nil, xerrors.Errorf("failed to get created actor: %w", err)
+	}
+
+	// Create a fresh VM with the updated state for the actual call
+	vmopt.StateBase = newStateCid
+	vmi, err = sm.newVM(ctx, vmopt)
+	if err != nil {
+		return nil, cid.Undef, nil, xerrors.Errorf("failed to set up vm with synthetic actor: %w", err)
+	}
+
+	return fromActor, newStateCid, vmi, nil
 }
 
 var errHaltExecution = fmt.Errorf("halt")
