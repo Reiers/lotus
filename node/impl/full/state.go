@@ -483,7 +483,11 @@ func (m *StateModule) StateGetActor(ctx context.Context, actor address.Address, 
 	if err != nil {
 		return nil, xerrors.Errorf("loading tipset %s: %w", tsk, err)
 	}
-	return m.StateManager.LoadActor(ctx, actor, ts)
+	a, err = m.StateManager.LoadActor(ctx, actor, ts)
+	if err != nil && errors.Is(err, types.ErrActorNotFound) {
+		return nil, &api.ErrActorNotFound{Addr: actor.String()}
+	}
+	return a, err
 }
 
 func (m *StateModule) StateLookupID(ctx context.Context, addr address.Address, tsk types.TipSetKey) (address.Address, error) {
@@ -494,7 +498,7 @@ func (m *StateModule) StateLookupID(ctx context.Context, addr address.Address, t
 
 	ret, err := m.StateManager.LookupIDAddress(ctx, addr, ts)
 	if err != nil && errors.Is(err, types.ErrActorNotFound) {
-		return address.Undef, &api.ErrActorNotFound{}
+		return address.Undef, &api.ErrActorNotFound{Addr: addr.String()}
 	}
 
 	return ret, err
