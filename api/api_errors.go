@@ -100,9 +100,23 @@ type ErrOutOfGas struct{}
 func (ErrOutOfGas) Error() string { return "call ran out of gas" }
 
 // ErrActorNotFound signals that the actor is not found.
-type ErrActorNotFound struct{}
+// For new wallets, this means the address has never received any FIL.
+type ErrActorNotFound struct {
+	Addr string // optional: the address that was not found
+}
 
-func (ErrActorNotFound) Error() string { return "actor not found" }
+func (e ErrActorNotFound) Error() string {
+	if e.Addr != "" {
+		return "actor not found for address " + e.Addr + ": this address may not exist on-chain yet — send FIL to it first to initialize it"
+	}
+	return "actor not found"
+}
+
+// Is allows errors.Is to match any ErrActorNotFound regardless of the Addr field.
+func (e *ErrActorNotFound) Is(target error) bool {
+	_, ok := target.(*ErrActorNotFound)
+	return ok
+}
 
 type errF3Disabled struct{}
 
