@@ -1,6 +1,6 @@
 module github.com/filecoin-project/lotus
 
-go 1.24.7
+go 1.25
 
 retract v1.14.0 // Accidentally force-pushed tag, use v1.14.1+ instead.
 
@@ -357,3 +357,5 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/telemetry v0.0.0-20260209163413-e7419c687ee4 // indirect
 )
+
+replace github.com/filecoin-project/go-jsonrpc => github.com/Reiers/go-jsonrpc v0.10.2-blooms
