@@ -15,7 +15,13 @@
 package ffiwrapper
 
 import (
+	"context"
 	"errors"
+
+	"github.com/filecoin-project/go-state-types/abi"
+	"github.com/filecoin-project/go-state-types/proof"
+
+	"github.com/filecoin-project/lotus/storage/sealer/storiface"
 )
 
 var errFFIWrapperNotBuiltWithCGo = errors.New("ffiwrapper: this package requires building with CGO_ENABLED=1 (filecoin-ffi linkage). PDP-only deployments should never reach this code path.")
@@ -32,5 +38,45 @@ type FFIWrapperOpt func(*FFIWrapperOpts)
 // New under !cgo returns a stub error. Real callers (sealing workers)
 // build with CGO_ENABLED=1.
 func New(_ SectorProvider, _ ...FFIWrapperOpt) (*Sealer, error) {
+	return nil, errFFIWrapperNotBuiltWithCGo
+}
+
+// nocgoProver / nocgoVerifier are the !cgo stubs for ProofProver /
+// ProofVerifier package-level singletons. All methods return
+// errFFIWrapperNotBuiltWithCGo. Curio Core never reaches these code
+// paths; sealing-side callers build with CGO_ENABLED=1.
+
+type nocgoProver struct{}
+
+var ProofProver = nocgoProver{}
+
+var _ storiface.Prover = ProofProver
+
+func (nocgoProver) AggregateSealProofs(_ proof.AggregateSealVerifyProofAndInfos, _ [][]byte) ([]byte, error) {
+	return nil, errFFIWrapperNotBuiltWithCGo
+}
+
+type nocgoVerifier struct{}
+
+var ProofVerifier = nocgoVerifier{}
+
+var _ storiface.Verifier = ProofVerifier
+
+func (nocgoVerifier) VerifySeal(_ proof.SealVerifyInfo) (bool, error) {
+	return false, errFFIWrapperNotBuiltWithCGo
+}
+func (nocgoVerifier) VerifyAggregateSeals(_ proof.AggregateSealVerifyProofAndInfos) (bool, error) {
+	return false, errFFIWrapperNotBuiltWithCGo
+}
+func (nocgoVerifier) VerifyReplicaUpdate(_ proof.ReplicaUpdateInfo) (bool, error) {
+	return false, errFFIWrapperNotBuiltWithCGo
+}
+func (nocgoVerifier) VerifyWinningPoSt(_ context.Context, _ proof.WinningPoStVerifyInfo) (bool, error) {
+	return false, errFFIWrapperNotBuiltWithCGo
+}
+func (nocgoVerifier) VerifyWindowPoSt(_ context.Context, _ proof.WindowPoStVerifyInfo) (bool, error) {
+	return false, errFFIWrapperNotBuiltWithCGo
+}
+func (nocgoVerifier) GenerateWinningPoStSectorChallenge(_ context.Context, _ abi.RegisteredPoStProof, _ abi.ActorID, _ abi.PoStRandomness, _ uint64) ([]uint64, error) {
 	return nil, errFFIWrapperNotBuiltWithCGo
 }
