@@ -8,7 +8,6 @@ import (
 
 	"golang.org/x/xerrors"
 
-	ffi "github.com/filecoin-project/filecoin-ffi"
 	"github.com/filecoin-project/go-state-types/abi"
 
 	"github.com/filecoin-project/lotus/storage/sealer/storiface"
@@ -97,7 +96,7 @@ func (m *Manager) CheckProvable(ctx context.Context, pp abi.RegisteredPoStProof,
 				return
 			}
 
-			ch, err := ffi.GeneratePoStFallbackSectorChallenges(pp, sector.ID.Miner, postRand, []abi.SectorNumber{
+			ch, err := generatePoStFallbackSectorChallenges(pp, sector.ID.Miner, postRand, []abi.SectorNumber{
 				sector.ID.Number,
 			})
 			if err != nil {

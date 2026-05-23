@@ -18,13 +18,11 @@ import (
 	"github.com/ipfs/go-cid"
 	"golang.org/x/xerrors"
 
-	ffi "github.com/filecoin-project/filecoin-ffi"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/proof"
 	"github.com/filecoin-project/go-statestore"
 
 	"github.com/filecoin-project/lotus/storage/paths"
-	"github.com/filecoin-project/lotus/storage/sealer/ffiwrapper"
 	"github.com/filecoin-project/lotus/storage/sealer/sealtasks"
 	"github.com/filecoin-project/lotus/storage/sealer/storiface"
 )
@@ -184,11 +182,10 @@ func (l *localWorkerPathProvider) AcquireSectorCopy(ctx context.Context, id stor
 	return (&localWorkerPathProvider{w: l.w, op: storiface.AcquireCopy}).AcquireSector(ctx, id, existing, allocate, ptype)
 }
 
-func FFIExec(opts ...ffiwrapper.FFIWrapperOpt) func(l *LocalWorker) (storiface.Storage, error) {
-	return func(l *LocalWorker) (storiface.Storage, error) {
-		return ffiwrapper.New(&localWorkerPathProvider{w: l}, opts...)
-	}
-}
+// FFIExec is split across build tags: see worker_local_cgo.go and
+// worker_local_nocgo.go. The CGo body wires ffiwrapper.New into the
+// Storage interface; the !cgo stub returns an error explaining the
+// build constraint.
 
 type ReturnType string
 
@@ -820,10 +817,7 @@ func (l *LocalWorker) memInfo() (memPhysical, memUsed, memSwap, memSwapUsed uint
 }
 
 func (l *LocalWorker) Info(context.Context) (storiface.WorkerInfo, error) {
-	gpus, err := ffi.GetGPUDevices()
-	if err != nil {
-		log.Errorf("getting gpu devices failed: %+v", err)
-	}
+	gpus := localWorkerGPUDevices()
 	log.Infow("Detected GPU devices.", "count", len(gpus))
 
 	memPhysical, memUsed, memSwap, memSwapUsed, err := l.memInfo()
